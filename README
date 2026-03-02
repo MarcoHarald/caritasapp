@@ -1,1 +1,208 @@
-i want a webapp for a charity shop so that the person runnig the charity shop can track volunteer hours, daily cashflow in cash at the shop, and deposits/extractions made from the bank account. no connection to the bank account api, we keep a ledger in  supabase. sometimes will want to add receipt photos. ideally implement a simple google sign in using supabase
+# CaritasApp - Charity Shop Ledger Web App Plan
+
+## 1) Product goal
+Build a simple, secure web app connected to Supabase so a charity shop manager can:
+- Track volunteer hours
+- Track daily cash movements in the shop
+- Track manual bank account ledger entries (deposits and extractions)
+- Attach receipt photos to transactions when needed
+- Sign in with Google (via Supabase Auth)
+
+No direct bank API integration is required for MVP. The bank area is a manual ledger.
+
+## 2) Suggested MVP stack
+- Frontend: Next.js (App Router) + TypeScript
+- UI: Tailwind CSS + a lightweight component library (optional)
+- Backend: Supabase (Postgres, Auth, Storage, RLS)
+- Forms/validation: React Hook Form + Zod
+- Deployment: Vercel (frontend) + Supabase project
+
+## 3) Roles and access
+- **Manager/Admin**
+  - Full access to volunteers, cash ledger, bank ledger, receipts, reports
+- **Volunteer**
+  - Can log own hours
+  - Can view own submitted hours
+  - No financial editing by default
+- **Accountant (optional)**
+  - Read-only access to finance pages and exports
+
+## 4) Data model (MVP)
+
+### `profiles`
+Linked to `auth.users`.
+- `id uuid` (PK, references auth user id)
+- `full_name text`
+- `email text`
+- `created_at timestamptz`
+
+### `shops`
+Supports one or many shops.
+- `id uuid` (PK)
+- `name text`
+- `currency text` (for example `EUR`)
+- `timezone text`
+
+### `user_shop_roles`
+Membership and role per shop.
+- `id uuid` (PK)
+- `user_id uuid` (FK -> profiles.id)
+- `shop_id uuid` (FK -> shops.id)
+- `role text` (`manager`, `volunteer`, `accountant`)
+
+### `volunteer_hours`
+- `id uuid` (PK)
+- `shop_id uuid` (FK)
+- `user_id uuid` (FK)
+- `work_date date`
+- `start_time time`
+- `end_time time`
+- `hours numeric(5,2)` (can be auto-calculated)
+- `notes text`
+- `status text` (`submitted`, `approved`, `rejected`)
+- `approved_by uuid` (nullable)
+- `created_at timestamptz`
+
+### `cash_sessions`
+One row per day (or shift) to support opening/closing checks.
+- `id uuid` (PK)
+- `shop_id uuid` (FK)
+- `session_date date`
+- `opening_cash numeric(12,2)`
+- `closing_cash_counted numeric(12,2)` (nullable until close)
+- `notes text`
+- `closed_by uuid` (nullable)
+- `closed_at timestamptz` (nullable)
+
+### `cash_entries`
+Every cash movement in the shop.
+- `id uuid` (PK)
+- `shop_id uuid` (FK)
+- `cash_session_id uuid` (FK)
+- `entry_date timestamptz`
+- `type text` (`sale`, `expense`, `float_in`, `float_out`, `deposit_to_bank`, `adjustment`)
+- `direction text` (`in`, `out`)
+- `category text`
+- `amount numeric(12,2)` (positive only)
+- `description text`
+- `created_by uuid`
+- `created_at timestamptz`
+
+### `bank_ledger_entries`
+Manual ledger for the real bank account.
+- `id uuid` (PK)
+- `shop_id uuid` (FK)
+- `entry_date timestamptz`
+- `type text` (`cash_deposit`, `withdrawal`, `bank_fee`, `adjustment`, `other`)
+- `direction text` (`in`, `out`)
+- `amount numeric(12,2)` (positive only)
+- `reference text` (deposit slip id, note, etc.)
+- `description text`
+- `created_by uuid`
+- `created_at timestamptz`
+
+### `receipts`
+Metadata for uploaded images.
+- `id uuid` (PK)
+- `shop_id uuid` (FK)
+- `entity_type text` (`cash_entry`, `bank_entry`)
+- `entity_id uuid`
+- `storage_path text`
+- `uploaded_by uuid`
+- `created_at timestamptz`
+
+## 5) Storage plan for receipt photos
+- Supabase Storage bucket: `receipts`
+- Path convention: `shop/{shop_id}/{entity_type}/{entity_id}/{timestamp}.jpg`
+- Restrict access via storage policies:
+  - Managers can upload/read all receipts in their shop
+  - Volunteers can upload receipts only when creating allowed records
+- Validate file type and max size in frontend and backend
+
+## 6) Security and audit requirements
+- Enable RLS on every app table
+- Scope all finance and hours data by `shop_id`
+- Derive permissions from `user_shop_roles`
+- Add `created_by`, `created_at`, and optional `updated_at`
+- Avoid hard deletion for financial records (prefer reversal/correction entries)
+- Keep financial amounts positive and use `direction` for sign logic
+
+## 7) Main screens (MVP)
+1. **Sign in**
+   - Google OAuth through Supabase Auth
+2. **Dashboard**
+   - Today's cash in/out totals
+   - Current cash session status
+   - Pending volunteer hours approvals
+3. **Volunteer Hours**
+   - Log shift
+   - List/filter by date and volunteer
+   - Approve/reject (manager)
+4. **Cash Ledger**
+   - Open/close daily session
+   - Add cash entries
+   - Running daily total
+5. **Bank Ledger**
+   - Add deposit/extraction entries
+   - Filter by date/type
+   - Running balance view
+6. **Receipts**
+   - Upload image for a cash or bank entry
+   - Preview/download
+7. **Reports**
+   - CSV export for selected date ranges
+
+## 8) Business rules to implement early
+- Only one open `cash_session` per shop per day
+- `end_time` must be after `start_time` for volunteer hours
+- `hours` auto-calculated, with manual override only for managers
+- `amount > 0` for all finance entries
+- No edits on closed/reconciled sessions unless manager overrides
+- Corrections should be separate entries, not destructive edits
+
+## 9) Delivery phases
+
+### Phase 1 - Foundation
+- Create Supabase project
+- Configure Google OAuth provider
+- Add initial SQL migrations for tables + indexes + RLS
+- Seed one shop and one manager
+
+### Phase 2 - Core workflows
+- Build auth/session handling in Next.js
+- Build Volunteer Hours CRUD + approvals
+- Build Cash Sessions + Cash Entries
+- Build Bank Ledger Entries
+
+### Phase 3 - Receipts and reporting
+- Add receipt upload + linking
+- Add dashboard summaries
+- Add CSV exports
+
+### Phase 4 - Hardening
+- Validation and error handling
+- Audit trails and correction flow
+- E2E smoke tests
+- Basic backup/restore runbook
+
+## 10) Suggested initial backlog
+- [ ] Set up Next.js app and Supabase client
+- [ ] Create migration 001 (core tables)
+- [ ] Create migration 002 (RLS policies)
+- [ ] Implement Google login flow
+- [ ] Build Volunteer Hours page
+- [ ] Build Cash Ledger page
+- [ ] Build Bank Ledger page
+- [ ] Implement receipt uploads
+- [ ] Add dashboard aggregates
+- [ ] Add CSV export endpoints
+
+## 11) Open decisions
+- Single shop or multi-shop at launch?
+- Final currency and timezone defaults?
+- Who can approve volunteer hours?
+- Do you need monthly lock/reconciliation for finance data?
+- Should volunteers see finance summaries or only managers?
+
+## 12) Definition of done for MVP
+MVP is done when a manager can sign in with Google, record volunteer hours, record daily cash and bank ledger movements, attach receipts, and export data - with RLS enforcing that users only access data they are allowed to see.
