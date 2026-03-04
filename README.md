@@ -64,6 +64,20 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 npm run dev
 ```
 
+## Troubleshooting
+
+### Tailwind oxide native binding missing
+
+If you see an error like `Cannot find module '@tailwindcss/oxide-linux-x64-gnu'`:
+
+- run `npm install` again
+- if needed, delete `node_modules` and reinstall
+
+This repository also includes:
+
+- `.npmrc` with `include=optional`
+- an automatic preflight script (`scripts/ensure-tailwind-oxide.js`) that repairs missing Tailwind oxide native bindings before `npm run dev` and `npm run build` on Linux x64.
+
 ## Scripts
 
 - `npm run dev` - development server
