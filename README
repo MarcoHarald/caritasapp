@@ -1,1 +1,0 @@
-i want a webapp for a charity shop so that the person runnig the charity shop can track volunteer hours, daily cashflow in cash at the shop, and deposits/extractions made from the bank account. no connection to the bank account api, we keep a ledger in  supabase. sometimes will want to add receipt photos. ideally implement a simple google sign in using supabase
