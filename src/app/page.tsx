@@ -117,13 +117,18 @@ export default function Home() {
     () => (configured ? getSupabaseBrowserClient() : null),
     [configured],
   );
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
+  const [isGoogleEnabled, setIsGoogleEnabled] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [workingAction, setWorkingAction] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
 
   const [shops, setShops] = useState<Shop[]>([]);
   const [activeShopId, setActiveShopId] = useState("");
@@ -345,6 +350,50 @@ export default function Home() {
   }, [supabase]);
 
   useEffect(() => {
+    if (!configured || !supabaseUrl || !supabaseAnonKey) {
+      setIsGoogleEnabled(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadAuthSettings() {
+      try {
+        const response = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+          headers: {
+            apikey: supabaseAnonKey,
+          },
+        });
+
+        if (!response.ok) {
+          if (!cancelled) {
+            setIsGoogleEnabled(null);
+          }
+          return;
+        }
+
+        const payload = (await response.json()) as {
+          external?: { google?: boolean };
+        };
+
+        if (!cancelled) {
+          setIsGoogleEnabled(Boolean(payload.external?.google));
+        }
+      } catch {
+        if (!cancelled) {
+          setIsGoogleEnabled(null);
+        }
+      }
+    }
+
+    void loadAuthSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, supabaseAnonKey, supabaseUrl]);
+
+  useEffect(() => {
     if (!supabase || !user) {
       setShops([]);
       setActiveShopId("");
@@ -434,6 +483,13 @@ export default function Home() {
       return;
     }
 
+    if (isGoogleEnabled === false) {
+      setFailure(
+        "Google sign-in is not enabled in Supabase Auth. Use email/password login below, or enable Google in Supabase Auth Providers.",
+      );
+      return;
+    }
+
     setWorkingAction("signin");
     setNotice("");
     setError("");
@@ -450,6 +506,37 @@ export default function Home() {
     }
 
     setWorkingAction("");
+  };
+
+  const handleEmailPasswordSignIn = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase) {
+      return;
+    }
+
+    const email = loginEmail.trim();
+    if (!email || !loginPassword) {
+      setFailure("Enter both email and password.");
+      return;
+    }
+
+    setWorkingAction("email-signin");
+    setNotice("");
+    setError("");
+
+    const { error: passwordSignInError } = await supabase.auth.signInWithPassword({
+      email,
+      password: loginPassword,
+    });
+
+    if (passwordSignInError) {
+      setFailure(`Email sign-in failed: ${passwordSignInError.message}`);
+      setWorkingAction("");
+      return;
+    }
+
+    setWorkingAction("");
+    setFeedback("Signed in.");
   };
 
   const handleSignOut = async () => {
@@ -893,6 +980,41 @@ export default function Home() {
         >
           {workingAction === "signin" ? "Connecting..." : "Sign in with Google"}
         </button>
+        {isGoogleEnabled === false ? (
+          <p className="max-w-xl rounded-md border border-amber-400 bg-amber-100 px-4 py-3 text-center text-sm text-amber-900">
+            Google Auth is currently disabled on this Supabase project.
+          </p>
+        ) : null}
+        <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+          <p className="mb-3 text-sm font-medium text-zinc-700">Or sign in with email/password</p>
+          <form className="flex flex-col gap-2" onSubmit={handleEmailPasswordSignIn}>
+            <input
+              type="email"
+              value={loginEmail}
+              onChange={(event) => setLoginEmail(event.target.value)}
+              placeholder="Email"
+              autoComplete="email"
+              className="rounded-md border border-zinc-300 px-3 py-2"
+              required
+            />
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(event) => setLoginPassword(event.target.value)}
+              placeholder="Password"
+              autoComplete="current-password"
+              className="rounded-md border border-zinc-300 px-3 py-2"
+              required
+            />
+            <button
+              type="submit"
+              className="rounded-md border border-zinc-300 px-3 py-2 hover:bg-zinc-100 disabled:opacity-60"
+              disabled={workingAction === "email-signin"}
+            >
+              {workingAction === "email-signin" ? "Signing in..." : "Sign in with email"}
+            </button>
+          </form>
+        </div>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
       </main>
     );
