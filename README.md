@@ -5,6 +5,7 @@ Owner-only charity shop ledger web app connected to Supabase.
 ## MVP scope implemented
 
 - Google sign in via Supabase Auth
+- Email/password sign in fallback
 - Multi-shop support (one owner can manage multiple shops)
 - Shop defaults:
   - Currency: `EUR`
@@ -43,17 +44,19 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 ```
 
-4. Create a Supabase project and apply migration:
+4. Create a Supabase project and apply migrations:
 
-- Run SQL from:
-  - `supabase/migrations/20260302183000_init_owner_only_schema.sql`
+- Run SQL files from:
+  - `supabase/migrations/`
 
 5. In Supabase Auth:
 
 - Enable Google provider
 - Add your app callback URL:
   - `http://localhost:3000/auth/callback` (dev)
+  - `https://*-3000.app.github.dev/auth/callback` (GitHub Codespaces preview)
   - your production URL `/auth/callback` (prod)
+- Keep Email provider enabled for fallback sign in
 
 6. Start the app:
 
