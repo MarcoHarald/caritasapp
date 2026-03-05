@@ -9,7 +9,6 @@ import type {
   BankLedgerEntry,
   CashEntry,
   CashEntryType,
-  CashSession,
   Direction,
   Receipt,
   Shop,
@@ -27,14 +26,13 @@ import {
   toIsoStringFromLocal,
 } from "@/lib/utils";
 
-type Tab = "dashboard" | "volunteers" | "cash" | "bank" | "receipts" | "reports";
+type Tab = "dashboard" | "volunteers" | "cash" | "bank" | "reports";
 
 const tabs: { key: Tab; label: string }[] = [
   { key: "dashboard", label: "Dashboard" },
   { key: "volunteers", label: "Volunteer Hours" },
-  { key: "cash", label: "Cash Ledger" },
+  { key: "cash", label: "Cash Entries" },
   { key: "bank", label: "Bank Ledger" },
-  { key: "receipts", label: "Receipts" },
   { key: "reports", label: "Reports" },
 ];
 
@@ -75,18 +73,6 @@ function normalizeVolunteerHours(rows: unknown[]) {
     return {
       ...typed,
       hours: toNumber(typed.hours),
-    };
-  });
-}
-
-function normalizeCashSessions(rows: unknown[]) {
-  return rows.map((row) => {
-    const typed = row as CashSession;
-    return {
-      ...typed,
-      opening_cash: toNumber(typed.opening_cash),
-      closing_cash_counted:
-        typed.closing_cash_counted === null ? null : toNumber(typed.closing_cash_counted),
     };
   });
 }
@@ -134,7 +120,6 @@ export default function Home() {
   const [activeShopId, setActiveShopId] = useState("");
 
   const [volunteerHours, setVolunteerHours] = useState<VolunteerHour[]>([]);
-  const [cashSessions, setCashSessions] = useState<CashSession[]>([]);
   const [cashEntries, setCashEntries] = useState<CashEntry[]>([]);
   const [bankEntries, setBankEntries] = useState<BankLedgerEntry[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
@@ -149,17 +134,14 @@ export default function Home() {
   const [volunteerEndTime, setVolunteerEndTime] = useState("13:00");
   const [volunteerNotes, setVolunteerNotes] = useState("");
 
-  const [cashSessionDate, setCashSessionDate] = useState(getTodayInItaly());
-  const [cashSessionOpening, setCashSessionOpening] = useState("0");
-  const [cashSessionNotes, setCashSessionNotes] = useState("");
-
-  const [cashEntrySessionId, setCashEntrySessionId] = useState("");
   const [cashEntryDateTime, setCashEntryDateTime] = useState(localDateTimeDefault());
   const [cashEntryType, setCashEntryType] = useState<CashEntryType>("sale");
   const [cashEntryDirection, setCashEntryDirection] = useState<Direction>("in");
   const [cashEntryCategory, setCashEntryCategory] = useState("");
+  const [cashEntrySubstore, setCashEntrySubstore] = useState("");
   const [cashEntryAmount, setCashEntryAmount] = useState("");
   const [cashEntryDescription, setCashEntryDescription] = useState("");
+  const [cashEntryReceiptFile, setCashEntryReceiptFile] = useState<File | null>(null);
 
   const [bankEntryDateTime, setBankEntryDateTime] = useState(localDateTimeDefault());
   const [bankEntryType, setBankEntryType] = useState<BankEntryType>("cash_deposit");
@@ -167,12 +149,6 @@ export default function Home() {
   const [bankEntryAmount, setBankEntryAmount] = useState("");
   const [bankEntryReference, setBankEntryReference] = useState("");
   const [bankEntryDescription, setBankEntryDescription] = useState("");
-
-  const [receiptEntityType, setReceiptEntityType] = useState<"cash_entry" | "bank_entry">(
-    "cash_entry",
-  );
-  const [receiptEntityId, setReceiptEntityId] = useState("");
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
 
   const user = session?.user ?? null;
   const activeShop = shops.find((shop) => shop.id === activeShopId) ?? null;
@@ -224,7 +200,6 @@ export default function Home() {
   const loadShopData = useCallback(async () => {
     if (!supabase || !activeShopId) {
       setVolunteerHours([]);
-      setCashSessions([]);
       setCashEntries([]);
       setBankEntries([]);
       setReceipts([]);
@@ -234,18 +209,13 @@ export default function Home() {
 
     setShopDataLoading(true);
 
-    const [volunteerResult, sessionResult, cashResult, bankResult, receiptResult] =
+    const [volunteerResult, cashResult, bankResult, receiptResult] =
       await Promise.all([
         supabase
           .from("volunteer_hours")
           .select("*")
           .eq("shop_id", activeShopId)
           .order("work_date", { ascending: false }),
-        supabase
-          .from("cash_sessions")
-          .select("*")
-          .eq("shop_id", activeShopId)
-          .order("session_date", { ascending: false }),
         supabase
           .from("cash_entries")
           .select("*")
@@ -268,7 +238,6 @@ export default function Home() {
 
     const firstError =
       volunteerResult.error ||
-      sessionResult.error ||
       cashResult.error ||
       bankResult.error ||
       receiptResult.error;
@@ -280,25 +249,13 @@ export default function Home() {
     }
 
     const normalizedVolunteer = normalizeVolunteerHours(volunteerResult.data ?? []);
-    const normalizedSessions = normalizeCashSessions(sessionResult.data ?? []);
     const normalizedCashEntries = normalizeCashEntries(cashResult.data ?? []);
     const normalizedBankEntries = normalizeBankEntries(bankResult.data ?? []);
 
     setVolunteerHours(normalizedVolunteer);
-    setCashSessions(normalizedSessions);
     setCashEntries(normalizedCashEntries);
     setBankEntries(normalizedBankEntries);
     setReceipts((receiptResult.data ?? []) as Receipt[]);
-
-    setCashEntrySessionId((current) => {
-      const hasCurrent = current && normalizedSessions.some((session) => session.id === current);
-      if (hasCurrent) {
-        return current;
-      }
-
-      const openSession = normalizedSessions.find((session) => !session.closed_at);
-      return openSession?.id ?? normalizedSessions[0]?.id ?? "";
-    });
 
     setShopDataLoading(false);
   }, [activeShopId, supabase]);
@@ -427,17 +384,6 @@ export default function Home() {
   useEffect(() => {
     void loadShopData();
   }, [loadShopData]);
-
-  useEffect(() => {
-    const ids =
-      receiptEntityType === "cash_entry"
-        ? cashEntries.map((entry) => entry.id)
-        : bankEntries.map((entry) => entry.id);
-
-    if (!ids.includes(receiptEntityId)) {
-      setReceiptEntityId(ids[0] ?? "");
-    }
-  }, [receiptEntityId, receiptEntityType, cashEntries, bankEntries]);
 
   useEffect(() => {
     const client = supabase;
@@ -639,81 +585,6 @@ export default function Home() {
     setWorkingAction("");
   };
 
-  const handleOpenCashSession = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!supabase || !activeShopId) {
-      return;
-    }
-
-    const openingCash = toNumber(cashSessionOpening);
-    if (openingCash < 0) {
-      setFailure("Opening cash must be a positive value.");
-      return;
-    }
-
-    setWorkingAction("open-cash-session");
-
-    const { error: insertError } = await supabase.from("cash_sessions").insert({
-      shop_id: activeShopId,
-      session_date: cashSessionDate,
-      opening_cash: openingCash,
-      notes: cashSessionNotes.trim() || null,
-    });
-
-    if (insertError) {
-      setFailure(`Failed to open cash session: ${insertError.message}`);
-      setWorkingAction("");
-      return;
-    }
-
-    setCashSessionNotes("");
-    setFeedback("Cash session opened.");
-    await loadShopData();
-    setWorkingAction("");
-  };
-
-  const handleCloseCashSession = async (sessionToClose: CashSession) => {
-    if (!supabase || !user) {
-      return;
-    }
-
-    const value = window.prompt(
-      `Closing cash counted for session ${sessionToClose.session_date}`,
-      String(sessionToClose.opening_cash),
-    );
-
-    if (value === null) {
-      return;
-    }
-
-    const closingValue = toNumber(value);
-    if (closingValue < 0) {
-      setFailure("Closing cash must be a positive value.");
-      return;
-    }
-
-    setWorkingAction("close-cash-session");
-
-    const { error: updateError } = await supabase
-      .from("cash_sessions")
-      .update({
-        closing_cash_counted: closingValue,
-        closed_at: new Date().toISOString(),
-        closed_by: user.id,
-      })
-      .eq("id", sessionToClose.id);
-
-    if (updateError) {
-      setFailure(`Failed to close cash session: ${updateError.message}`);
-      setWorkingAction("");
-      return;
-    }
-
-    setFeedback("Cash session closed.");
-    await loadShopData();
-    setWorkingAction("");
-  };
-
   const handleAddCashEntry = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!supabase || !activeShopId || !user) {
@@ -721,39 +592,81 @@ export default function Home() {
     }
 
     const amount = toNumber(cashEntryAmount);
-    if (!cashEntrySessionId) {
-      setFailure("Select a cash session first.");
-      return;
-    }
-
     if (amount <= 0) {
       setFailure("Amount must be greater than zero.");
       return;
     }
 
+    if (cashEntryReceiptFile) {
+      const allowed = ["image/jpeg", "image/png", "image/webp"];
+      if (!allowed.includes(cashEntryReceiptFile.type)) {
+        setFailure("Only JPG, PNG, and WebP receipt files are allowed.");
+        return;
+      }
+      if (cashEntryReceiptFile.size > 5 * 1024 * 1024) {
+        setFailure("Max receipt size is 5 MB.");
+        return;
+      }
+    }
+
     setWorkingAction("add-cash-entry");
 
-    const { error: insertError } = await supabase.from("cash_entries").insert({
-      shop_id: activeShopId,
-      cash_session_id: cashEntrySessionId,
-      entry_date: toIsoStringFromLocal(cashEntryDateTime),
-      type: cashEntryType,
-      direction: cashEntryDirection,
-      category: cashEntryCategory.trim() || null,
-      amount,
-      description: cashEntryDescription.trim() || null,
-      created_by: user.id,
-    });
+    const { data: inserted, error: insertError } = await supabase
+      .from("cash_entries")
+      .insert({
+        shop_id: activeShopId,
+        entry_date: toIsoStringFromLocal(cashEntryDateTime),
+        type: cashEntryType,
+        direction: cashEntryDirection,
+        category: cashEntryCategory.trim() || null,
+        substore: cashEntrySubstore.trim() || null,
+        amount,
+        description: cashEntryDescription.trim() || null,
+        created_by: user.id,
+      })
+      .select("id")
+      .single();
 
-    if (insertError) {
-      setFailure(`Failed to add cash entry: ${insertError.message}`);
+    if (insertError || !inserted) {
+      setFailure(`Failed to add cash entry: ${insertError?.message ?? "Unknown error"}`);
       setWorkingAction("");
       return;
     }
 
+    if (cashEntryReceiptFile) {
+      const filePath = `shop/${activeShopId}/cash_entry/${inserted.id}/${Date.now()}_${sanitizeFileName(cashEntryReceiptFile.name)}`;
+      const { error: uploadError } = await supabase.storage
+        .from("receipts")
+        .upload(filePath, cashEntryReceiptFile);
+
+      if (uploadError) {
+        setFailure(`Cash entry saved but receipt upload failed: ${uploadError.message}`);
+        setWorkingAction("");
+        await loadShopData();
+        return;
+      }
+
+      const { error: receiptInsertError } = await supabase.from("receipts").insert({
+        shop_id: activeShopId,
+        entity_type: "cash_entry",
+        entity_id: inserted.id,
+        storage_path: filePath,
+        uploaded_by: user.id,
+      });
+
+      if (receiptInsertError) {
+        setFailure(`Cash entry saved but receipt metadata failed: ${receiptInsertError.message}`);
+        setWorkingAction("");
+        await loadShopData();
+        return;
+      }
+    }
+
     setCashEntryAmount("");
     setCashEntryCategory("");
+    setCashEntrySubstore("");
     setCashEntryDescription("");
+    setCashEntryReceiptFile(null);
     setCashEntryDateTime(localDateTimeDefault());
     setFeedback("Cash entry added.");
     await loadShopData();
@@ -800,66 +713,6 @@ export default function Home() {
     setWorkingAction("");
   };
 
-  const handleUploadReceipt = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!supabase || !user || !activeShopId) {
-      return;
-    }
-
-    if (!receiptEntityId) {
-      setFailure("Select the record this receipt belongs to.");
-      return;
-    }
-
-    if (!receiptFile) {
-      setFailure("Select an image file.");
-      return;
-    }
-
-    const allowed = ["image/jpeg", "image/png", "image/webp"];
-    if (!allowed.includes(receiptFile.type)) {
-      setFailure("Only JPG, PNG, and WebP files are allowed.");
-      return;
-    }
-
-    if (receiptFile.size > 5 * 1024 * 1024) {
-      setFailure("Max receipt size is 5 MB.");
-      return;
-    }
-
-    setWorkingAction("upload-receipt");
-
-    const filePath = `shop/${activeShopId}/${receiptEntityType}/${receiptEntityId}/${Date.now()}_${sanitizeFileName(receiptFile.name)}`;
-    const { error: uploadError } = await supabase.storage
-      .from("receipts")
-      .upload(filePath, receiptFile);
-
-    if (uploadError) {
-      setFailure(`Upload failed: ${uploadError.message}`);
-      setWorkingAction("");
-      return;
-    }
-
-    const { error: insertError } = await supabase.from("receipts").insert({
-      shop_id: activeShopId,
-      entity_type: receiptEntityType,
-      entity_id: receiptEntityId,
-      storage_path: filePath,
-      uploaded_by: user.id,
-    });
-
-    if (insertError) {
-      setFailure(`Failed to store receipt metadata: ${insertError.message}`);
-      setWorkingAction("");
-      return;
-    }
-
-    setReceiptFile(null);
-    setFeedback("Receipt uploaded.");
-    await loadShopData();
-    setWorkingAction("");
-  };
-
   const exportVolunteerCsv = () => {
     const csv = toCsv(
       volunteerHours.map((entry) => ({
@@ -883,6 +736,7 @@ export default function Home() {
         type: entry.type,
         direction: entry.direction,
         category: entry.category ?? "",
+        substore: entry.substore ?? "",
         amount: entry.amount,
         signed_amount: entry.direction === "in" ? entry.amount : -entry.amount,
         description: entry.description ?? "",
@@ -892,6 +746,7 @@ export default function Home() {
         "type",
         "direction",
         "category",
+        "substore",
         "amount",
         "signed_amount",
         "description",
@@ -941,7 +796,24 @@ export default function Home() {
     0,
   );
 
-  const openSession = cashSessions.find((sessionRow) => !sessionRow.closed_at) ?? null;
+  const knownSubstores = useMemo(() => {
+    const set = new Set<string>();
+    for (const entry of cashEntries) {
+      if (entry.substore) set.add(entry.substore);
+    }
+    return Array.from(set).sort();
+  }, [cashEntries]);
+
+  const cashEntryReceiptMap = useMemo(() => {
+    const map: Record<string, Receipt[]> = {};
+    for (const r of receipts) {
+      if (r.entity_type === "cash_entry") {
+        if (!map[r.entity_id]) map[r.entity_id] = [];
+        map[r.entity_id].push(r);
+      }
+    }
+    return map;
+  }, [receipts]);
 
   if (!configured) {
     return (
@@ -1128,20 +1000,11 @@ export default function Home() {
                 <h3 className="text-sm text-zinc-500">Bank running balance</h3>
                 <p className="mt-2 text-2xl font-semibold">{formatEur(bankNetBalance)}</p>
               </article>
-              <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm md:col-span-4">
-                <h3 className="text-sm text-zinc-500">Cash session status</h3>
-                {openSession ? (
-                  <p className="mt-2 text-zinc-800">
-                    Open session: <strong>{openSession.session_date}</strong>, opening cash{" "}
-                    <strong>{formatEur(openSession.opening_cash)}</strong>
-                  </p>
-                ) : (
-                  <p className="mt-2 text-zinc-600">No open cash session.</p>
-                )}
-                {shopDataLoading ? (
-                  <p className="mt-3 text-sm text-zinc-500">Refreshing data...</p>
-                ) : null}
-              </article>
+              {shopDataLoading ? (
+                <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm md:col-span-4">
+                  <p className="text-sm text-zinc-500">Refreshing data...</p>
+                </article>
+              ) : null}
             </section>
           ) : null}
 
@@ -1236,56 +1099,8 @@ export default function Home() {
           {activeTab === "cash" ? (
             <section className="grid gap-4 lg:grid-cols-3">
               <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-                <h3 className="text-lg font-medium">Open cash session</h3>
-                <form className="mt-3 flex flex-col gap-2" onSubmit={handleOpenCashSession}>
-                  <input
-                    type="date"
-                    value={cashSessionDate}
-                    onChange={(event) => setCashSessionDate(event.target.value)}
-                    className="rounded-md border border-zinc-300 px-3 py-2"
-                    required
-                  />
-                  <input
-                    type="number"
-                    value={cashSessionOpening}
-                    onChange={(event) => setCashSessionOpening(event.target.value)}
-                    placeholder="Opening cash"
-                    step="0.01"
-                    min="0"
-                    className="rounded-md border border-zinc-300 px-3 py-2"
-                    required
-                  />
-                  <textarea
-                    value={cashSessionNotes}
-                    onChange={(event) => setCashSessionNotes(event.target.value)}
-                    placeholder="Notes (optional)"
-                    className="min-h-24 rounded-md border border-zinc-300 px-3 py-2"
-                  />
-                  <button
-                    type="submit"
-                    disabled={workingAction === "open-cash-session"}
-                    className="rounded-md bg-zinc-900 px-3 py-2 text-white hover:bg-zinc-700 disabled:opacity-60"
-                  >
-                    {workingAction === "open-cash-session" ? "Saving..." : "Open session"}
-                  </button>
-                </form>
-
-                <h3 className="mt-6 text-lg font-medium">Add cash entry</h3>
+                <h3 className="text-lg font-medium">Add cash entry</h3>
                 <form className="mt-3 flex flex-col gap-2" onSubmit={handleAddCashEntry}>
-                  <select
-                    value={cashEntrySessionId}
-                    onChange={(event) => setCashEntrySessionId(event.target.value)}
-                    className="rounded-md border border-zinc-300 px-3 py-2"
-                    required
-                  >
-                    <option value="">Select cash session</option>
-                    {cashSessions.map((sessionRow) => (
-                      <option key={sessionRow.id} value={sessionRow.id}>
-                        {sessionRow.session_date}
-                        {sessionRow.closed_at ? " (closed)" : " (open)"}
-                      </option>
-                    ))}
-                  </select>
                   <input
                     type="datetime-local"
                     value={cashEntryDateTime}
@@ -1315,12 +1130,6 @@ export default function Home() {
                     </select>
                   </div>
                   <input
-                    value={cashEntryCategory}
-                    onChange={(event) => setCashEntryCategory(event.target.value)}
-                    placeholder="Category (optional)"
-                    className="rounded-md border border-zinc-300 px-3 py-2"
-                  />
-                  <input
                     type="number"
                     value={cashEntryAmount}
                     onChange={(event) => setCashEntryAmount(event.target.value)}
@@ -1330,12 +1139,48 @@ export default function Home() {
                     className="rounded-md border border-zinc-300 px-3 py-2"
                     required
                   />
+                  <input
+                    value={cashEntryCategory}
+                    onChange={(event) => setCashEntryCategory(event.target.value)}
+                    placeholder="Category (optional)"
+                    className="rounded-md border border-zinc-300 px-3 py-2"
+                  />
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-500">
+                      Substore (optional)
+                    </label>
+                    <input
+                      list="substore-options"
+                      value={cashEntrySubstore}
+                      onChange={(event) => setCashEntrySubstore(event.target.value)}
+                      placeholder="Type or select substore"
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2"
+                    />
+                    <datalist id="substore-options">
+                      {knownSubstores.map((s) => (
+                        <option key={s} value={s} />
+                      ))}
+                    </datalist>
+                  </div>
                   <textarea
                     value={cashEntryDescription}
                     onChange={(event) => setCashEntryDescription(event.target.value)}
                     placeholder="Description (optional)"
-                    className="min-h-24 rounded-md border border-zinc-300 px-3 py-2"
+                    className="min-h-20 rounded-md border border-zinc-300 px-3 py-2"
                   />
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-500">
+                      Receipt image (optional)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(event) =>
+                        setCashEntryReceiptFile(event.target.files?.[0] ?? null)
+                      }
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                    />
+                  </div>
                   <button
                     type="submit"
                     disabled={workingAction === "add-cash-entry"}
@@ -1348,85 +1193,63 @@ export default function Home() {
 
               <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm lg:col-span-2">
                 <div className="border-b border-zinc-200 p-4">
-                  <h3 className="text-lg font-medium">Cash sessions</h3>
+                  <h3 className="text-lg font-medium">Recent cash entries</h3>
                 </div>
-                <div className="max-h-60 overflow-auto border-b border-zinc-200">
+                <div className="max-h-[560px] overflow-auto">
                   <table className="min-w-full divide-y divide-zinc-200 text-sm">
                     <thead className="bg-zinc-50">
                       <tr>
                         <th className="px-3 py-2 text-left">Date</th>
-                        <th className="px-3 py-2 text-right">Opening</th>
-                        <th className="px-3 py-2 text-right">Closing</th>
-                        <th className="px-3 py-2 text-left">Status</th>
-                        <th className="px-3 py-2 text-right">Action</th>
+                        <th className="px-3 py-2 text-left">Type</th>
+                        <th className="px-3 py-2 text-left">Dir</th>
+                        <th className="px-3 py-2 text-left">Category</th>
+                        <th className="px-3 py-2 text-left">Substore</th>
+                        <th className="px-3 py-2 text-right">Amount</th>
+                        <th className="px-3 py-2 text-left">Description</th>
+                        <th className="px-3 py-2 text-left">Receipt</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100">
-                      {cashSessions.map((sessionRow) => (
-                        <tr key={sessionRow.id}>
-                          <td className="px-3 py-2">{sessionRow.session_date}</td>
-                          <td className="px-3 py-2 text-right">
-                            {formatEur(sessionRow.opening_cash)}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {sessionRow.closing_cash_counted === null
-                              ? "-"
-                              : formatEur(sessionRow.closing_cash_counted)}
-                          </td>
-                          <td className="px-3 py-2">
-                            {sessionRow.closed_at ? "Closed" : "Open"}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {!sessionRow.closed_at ? (
-                              <button
-                                type="button"
-                                className="rounded-md border border-zinc-300 px-2 py-1 hover:bg-zinc-100"
-                                onClick={() => void handleCloseCashSession(sessionRow)}
-                              >
-                                Close
-                              </button>
-                            ) : null}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {cashSessions.length === 0 ? (
-                    <p className="p-4 text-zinc-600">No cash sessions yet.</p>
-                  ) : null}
-                </div>
-
-                <div className="p-4">
-                  <h3 className="text-lg font-medium">Recent cash entries</h3>
-                  <div className="mt-3 max-h-[320px] overflow-auto">
-                    <table className="min-w-full divide-y divide-zinc-200 text-sm">
-                      <thead className="bg-zinc-50">
-                        <tr>
-                          <th className="px-3 py-2 text-left">Date</th>
-                          <th className="px-3 py-2 text-left">Type</th>
-                          <th className="px-3 py-2 text-left">Dir</th>
-                          <th className="px-3 py-2 text-left">Category</th>
-                          <th className="px-3 py-2 text-right">Amount</th>
-                          <th className="px-3 py-2 text-left">Description</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-100">
-                        {cashEntries.map((entry) => (
+                      {cashEntries.map((entry) => {
+                        const entryReceipts = cashEntryReceiptMap[entry.id];
+                        return (
                           <tr key={entry.id}>
                             <td className="px-3 py-2">{formatDateTime(entry.entry_date)}</td>
                             <td className="px-3 py-2">{entry.type}</td>
                             <td className="px-3 py-2">{entry.direction}</td>
                             <td className="px-3 py-2">{entry.category ?? ""}</td>
+                            <td className="px-3 py-2">
+                              {entry.substore ? (
+                                <span className="inline-block rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
+                                  {entry.substore}
+                                </span>
+                              ) : null}
+                            </td>
                             <td className="px-3 py-2 text-right">{formatEur(entry.amount)}</td>
                             <td className="px-3 py-2">{entry.description ?? ""}</td>
+                            <td className="px-3 py-2">
+                              {entryReceipts?.map((r) =>
+                                receiptSignedUrls[r.id] ? (
+                                  <a
+                                    key={r.id}
+                                    href={receiptSignedUrls[r.id]}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-700 underline"
+                                  >
+                                    View
+                                  </a>
+                                ) : null,
+                              )}
+                            </td>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {cashEntries.length === 0 ? (
-                      <p className="p-4 text-zinc-600">No cash entries yet.</p>
-                    ) : null}
-                  </div>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {cashEntries.length === 0 ? (
+                    <p className="p-4 text-zinc-600">No cash entries yet.</p>
+                  ) : null}
                 </div>
               </article>
             </section>
@@ -1528,99 +1351,6 @@ export default function Home() {
                   </table>
                   {bankEntries.length === 0 ? (
                     <p className="p-4 text-zinc-600">No bank ledger entries yet.</p>
-                  ) : null}
-                </div>
-              </article>
-            </section>
-          ) : null}
-
-          {activeTab === "receipts" ? (
-            <section className="grid gap-4 lg:grid-cols-3">
-              <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-                <h3 className="text-lg font-medium">Upload receipt</h3>
-                <form className="mt-3 flex flex-col gap-2" onSubmit={handleUploadReceipt}>
-                  <select
-                    value={receiptEntityType}
-                    onChange={(event) =>
-                      setReceiptEntityType(event.target.value as "cash_entry" | "bank_entry")
-                    }
-                    className="rounded-md border border-zinc-300 px-3 py-2"
-                  >
-                    <option value="cash_entry">cash_entry</option>
-                    <option value="bank_entry">bank_entry</option>
-                  </select>
-                  <select
-                    value={receiptEntityId}
-                    onChange={(event) => setReceiptEntityId(event.target.value)}
-                    className="rounded-md border border-zinc-300 px-3 py-2"
-                    required
-                  >
-                    <option value="">Select record</option>
-                    {(receiptEntityType === "cash_entry" ? cashEntries : bankEntries).map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {receiptEntityType === "cash_entry"
-                          ? `${formatDateTime((entry as CashEntry).entry_date)} - ${(entry as CashEntry).type} - ${formatEur((entry as CashEntry).amount)}`
-                          : `${formatDateTime((entry as BankLedgerEntry).entry_date)} - ${(entry as BankLedgerEntry).type} - ${formatEur((entry as BankLedgerEntry).amount)}`}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={(event) => setReceiptFile(event.target.files?.[0] ?? null)}
-                    className="rounded-md border border-zinc-300 px-3 py-2"
-                    required
-                  />
-                  <button
-                    type="submit"
-                    disabled={workingAction === "upload-receipt"}
-                    className="rounded-md bg-zinc-900 px-3 py-2 text-white hover:bg-zinc-700 disabled:opacity-60"
-                  >
-                    {workingAction === "upload-receipt" ? "Uploading..." : "Upload receipt"}
-                  </button>
-                </form>
-              </article>
-
-              <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm lg:col-span-2">
-                <div className="border-b border-zinc-200 p-4">
-                  <h3 className="text-lg font-medium">Uploaded receipts</h3>
-                </div>
-                <div className="max-h-[520px] overflow-auto">
-                  <table className="min-w-full divide-y divide-zinc-200 text-sm">
-                    <thead className="bg-zinc-50">
-                      <tr>
-                        <th className="px-3 py-2 text-left">Created</th>
-                        <th className="px-3 py-2 text-left">Entity type</th>
-                        <th className="px-3 py-2 text-left">Entity id</th>
-                        <th className="px-3 py-2 text-left">Preview</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-100">
-                      {receipts.map((receipt) => (
-                        <tr key={receipt.id}>
-                          <td className="px-3 py-2">{formatDateTime(receipt.created_at)}</td>
-                          <td className="px-3 py-2">{receipt.entity_type}</td>
-                          <td className="px-3 py-2 font-mono text-xs">{receipt.entity_id}</td>
-                          <td className="px-3 py-2">
-                            {receiptSignedUrls[receipt.id] ? (
-                              <a
-                                href={receiptSignedUrls[receipt.id]}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-blue-700 underline"
-                              >
-                                Open
-                              </a>
-                            ) : (
-                              <span className="text-zinc-500">Not available</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {receipts.length === 0 ? (
-                    <p className="p-4 text-zinc-600">No receipts uploaded yet.</p>
                   ) : null}
                 </div>
               </article>
