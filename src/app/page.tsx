@@ -1,7 +1,7 @@
 "use client";
 
 import type { Session } from "@supabase/supabase-js";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase/browser";
 import type {
@@ -133,6 +133,10 @@ export default function Home() {
   const [volunteerStartTime, setVolunteerStartTime] = useState("09:00");
   const [volunteerEndTime, setVolunteerEndTime] = useState("13:00");
   const [volunteerNotes, setVolunteerNotes] = useState("");
+  const [volunteerNameFocused, setVolunteerNameFocused] = useState(false);
+  const [volunteerNameHighlight, setVolunteerNameHighlight] = useState(-1);
+  const volunteerNameRef = useRef<HTMLInputElement>(null);
+  const volunteerSuggestionsRef = useRef<HTMLUListElement>(null);
 
   const [cashEntryDateTime, setCashEntryDateTime] = useState(localDateTimeDefault());
   const [cashEntryType, setCashEntryType] = useState<CashEntryType>("sale");
@@ -579,10 +583,10 @@ export default function Home() {
     }
 
     setVolunteerName("");
-    setVolunteerNotes("");
     setFeedback("Volunteer hours added.");
     await loadShopData();
     setWorkingAction("");
+    volunteerNameRef.current?.focus();
   };
 
   const handleAddCashEntry = async (event: FormEvent<HTMLFormElement>) => {
@@ -780,6 +784,26 @@ export default function Home() {
 
     downloadCsv(`bank_ledger_${activeShop?.name ?? "shop"}.csv`, csv);
   };
+
+  const knownVolunteerNames = useMemo(() => {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const entry of volunteerHours) {
+      const normalized = entry.volunteer_name.trim();
+      const key = normalized.toLowerCase();
+      if (normalized && !seen.has(key)) {
+        seen.add(key);
+        names.push(normalized);
+      }
+    }
+    return names.sort((a, b) => a.localeCompare(b, "it"));
+  }, [volunteerHours]);
+
+  const volunteerNameSuggestions = useMemo(() => {
+    const query = volunteerName.trim().toLowerCase();
+    if (!query) return knownVolunteerNames;
+    return knownVolunteerNames.filter((name) => name.toLowerCase().includes(query));
+  }, [volunteerName, knownVolunteerNames]);
 
   const todayInItaly = getTodayInItaly();
 
@@ -1013,13 +1037,85 @@ export default function Home() {
               <article className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                 <h3 className="text-lg font-medium">Add volunteer hours</h3>
                 <form className="mt-3 flex flex-col gap-2" onSubmit={handleAddVolunteerHour}>
-                  <input
-                    value={volunteerName}
-                    onChange={(event) => setVolunteerName(event.target.value)}
-                    placeholder="Volunteer name"
-                    className="rounded-md border border-zinc-300 px-3 py-2"
-                    required
-                  />
+                  <div className="relative">
+                    <input
+                      ref={volunteerNameRef}
+                      value={volunteerName}
+                      onChange={(event) => {
+                        setVolunteerName(event.target.value);
+                        setVolunteerNameHighlight(-1);
+                        if (!volunteerNameFocused) setVolunteerNameFocused(true);
+                      }}
+                      onFocus={() => {
+                        setVolunteerNameFocused(true);
+                        setVolunteerNameHighlight(-1);
+                      }}
+                      onBlur={(event) => {
+                        if (
+                          volunteerSuggestionsRef.current?.contains(
+                            event.relatedTarget as Node,
+                          )
+                        ) {
+                          return;
+                        }
+                        setVolunteerNameFocused(false);
+                      }}
+                      onKeyDown={(event) => {
+                        if (!volunteerNameFocused || volunteerNameSuggestions.length === 0) return;
+                        if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          setVolunteerNameHighlight((prev) =>
+                            prev < volunteerNameSuggestions.length - 1 ? prev + 1 : 0,
+                          );
+                        } else if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          setVolunteerNameHighlight((prev) =>
+                            prev > 0 ? prev - 1 : volunteerNameSuggestions.length - 1,
+                          );
+                        } else if (event.key === "Enter" && volunteerNameHighlight >= 0) {
+                          event.preventDefault();
+                          setVolunteerName(volunteerNameSuggestions[volunteerNameHighlight]);
+                          setVolunteerNameFocused(false);
+                          setVolunteerNameHighlight(-1);
+                        } else if (event.key === "Escape") {
+                          setVolunteerNameFocused(false);
+                          setVolunteerNameHighlight(-1);
+                        }
+                      }}
+                      placeholder="Volunteer name"
+                      className="w-full rounded-md border border-zinc-300 px-3 py-2"
+                      autoComplete="off"
+                      required
+                    />
+                    {volunteerNameFocused && volunteerNameSuggestions.length > 0 ? (
+                      <ul
+                        ref={volunteerSuggestionsRef}
+                        className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-md border border-zinc-200 bg-white shadow-lg"
+                      >
+                        {volunteerNameSuggestions.map((name, idx) => (
+                          <li key={name}>
+                            <button
+                              type="button"
+                              className={`w-full px-3 py-2 text-left text-sm ${
+                                idx === volunteerNameHighlight
+                                  ? "bg-zinc-100 text-zinc-900"
+                                  : "text-zinc-700 hover:bg-zinc-50"
+                              }`}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                setVolunteerName(name);
+                                setVolunteerNameFocused(false);
+                                setVolunteerNameHighlight(-1);
+                                volunteerNameRef.current?.focus();
+                              }}
+                            >
+                              {name}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
                   <input
                     type="date"
                     value={volunteerDate}
