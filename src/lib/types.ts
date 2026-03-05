@@ -20,18 +20,6 @@ export type VolunteerHour = {
   created_at: string;
 };
 
-export type CashSession = {
-  id: string;
-  shop_id: string;
-  session_date: string;
-  opening_cash: number;
-  closing_cash_counted: number | null;
-  notes: string | null;
-  closed_by: string | null;
-  closed_at: string | null;
-  created_at: string;
-};
-
 export type CashEntryType =
   | "sale"
   | "expense"
@@ -45,11 +33,11 @@ export type Direction = "in" | "out";
 export type CashEntry = {
   id: string;
   shop_id: string;
-  cash_session_id: string;
   entry_date: string;
   type: CashEntryType;
   direction: Direction;
   category: string | null;
+  substore: string | null;
   amount: number;
   description: string | null;
   created_by: string;
